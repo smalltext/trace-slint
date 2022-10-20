@@ -1,0 +1,140 @@
+
+global Palette := {
+    property<color> background: grey;
+    property<color> div: white;
+}
+
+struct Region := {
+	left: length,
+	right: length,
+	top: length,
+	bottom: length,
+	background: color,
+}
+
+RegionBack := Rectangle {
+	property <length> left;
+	property <length> right;
+	property <length> top;
+	property <length> bottom;
+	x: left;
+	y: top;
+	width: right - left;
+	height: bottom - top;
+	background: Palette.background;
+}
+
+struct Edge := {
+	isVert: bool,
+	id: int,
+	cen: length,
+	start: length,
+	end: length,
+}
+
+EdgeView := Rectangle {
+	callback dragged(int, length);
+
+	property <bool> isVert;
+	property <int> id;
+	property <length> cen;
+	property <length> start;
+	property <length> end;
+
+	width: isVert ? 8px : end - start;
+	x: isVert ? cen - width/2 : start;
+	y: isVert ? start : cen - height/2;
+	height: isVert ? end - start : 8px;
+
+	Rectangle { //visible
+		width: isVert ? 2px : parent.width;
+		height: isVert ? parent.height : 2px;
+		x: isVert ? (parent.width - width)/2 : parent.x;
+		y: isVert ? parent.y : (parent.height - height)/2;
+		background: Palette.div;
+	}
+
+	TouchArea {
+		mouse-cursor: isVert ? col-resize : row-resize; 	
+		property <length> drag-off: 0px;
+
+		pointer-event(event) => { 
+			if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+				drag-off = isVert ? mouse-x : mouse-y;
+			}
+		}
+
+		moved => { 
+			root.dragged(id, (isVert ? mouse-x : mouse-y) - drag-off);
+		}
+	}
+}
+
+CallbackCap := Rectangle {
+	property <bool> cap;
+	width: cap ? 0px : 0px;
+}
+
+export MainWindow := Window {
+	min-width: 100px;
+	min-height: 100px;
+	preferred-width: 600px;
+	preferred-height: 600px;
+
+	callback dragged(int, length);
+	callback resized(length, length) -> bool;
+
+	property <[Region]> regions;
+	property <[Edge]> edges;
+
+	CallbackCap { cap: resized(root.width, root.height); }
+
+	for region in regions : RegionBack {
+		left: region.left;
+		right: region.right;
+		top: region.top;
+		bottom: region.bottom;
+		background: region.background;
+	}
+
+	for edge in edges: EdgeView {
+		isVert: edge.isVert;
+		id: edge.id;
+		cen: edge.cen;
+		start: edge.start;
+		end: edge.end;
+		dragged(id, drag) => { root.dragged(id, drag) }
+	}
+	
+	/* callback dragged <=> div.dragged;
+	callback getRegions <=> div.getRegions;
+	callback getVertEdges <=> div.getVertEdges;
+
+	property <[Region]> regions <=> div.regions;
+	property <[VertEdge]> vertEdges <=> div.vertEdges;
+
+	div := Divvy {  } */
+}
+
+/* Divvy := Rectangle {
+	callback dragged(length);
+	callback getRegions() -> [Region];
+	callback getVertEdges() -> [VertEdge];
+
+	property <[Region]> regions: getRegions();
+	property <[VertEdge]> vertEdges: getVertEdges();
+
+	for region in regions : RegionBack {
+		left: region.left;
+		right: region.right;
+		top: region.top;
+		bottom: region.bottom;
+	}
+
+	for vertEdge in vertEdges: VertEdgeView {
+		cx: vertEdge.cx;
+		top: vertEdge.top;
+		bottom: vertEdge.bottom;
+		dragged(dist) => { root.dragged(dist) }
+	}
+} */

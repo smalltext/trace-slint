@@ -1,0 +1,45 @@
+import { Button, VerticalBox } from "std-widgets.slint";
+
+DraggableBox := Rectangle { 
+	width: 20px;
+	height: 20px;
+	background: green;
+
+	property <length> min-x;
+	property <length> max-x;
+	property <length> min-y;
+	property <length> max-y;
+
+	TouchArea { 		
+		property <length> drag-x: 0px;
+		property <length> drag-y: 0px;
+
+		pointer-event(event) => { 
+			if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+				drag-x = mouse-x;
+				drag-y = mouse-y;
+			}
+		}
+
+		moved => { 
+			parent.x = max(min(parent.x + mouse-x - drag-x, max-x - width/2), min-x - width/2);
+			parent.y = max(min(parent.y + mouse-y - drag-y, max-y - height/2),min-y - width/2);
+		}
+	}
+}
+
+export AppWindow := Window {
+    property<int> counter: 42;
+    callback request-increase-value();
+    VerticalBox { 
+        Text {
+            text: "Counter: \{counter}";
+        }
+        Button {
+            text: "Increase value";
+            clicked => { 
+                request-increase-value();
+            }
+        }
+     }
+}

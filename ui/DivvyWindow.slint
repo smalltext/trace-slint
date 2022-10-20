@@ -1,0 +1,202 @@
+
+global Palette := {
+    property<color> background: grey;
+    property<color> div: white;
+}
+
+struct DivStretch := {
+	colors: [color],
+	stoppers: [length],
+	links: [length],
+}
+
+InnerRect := Rectangle {
+	property <length> lx;
+	property <length> rx;
+	property <length> min-across;
+
+	x: lx;
+	width: rx - lx;
+	background: Palette.background;
+}
+
+VerticalEdge := Rectangle {
+	callback moved(int, length);
+	property <int> id;
+
+	width: 8px;
+	property <length> cx;
+	property <length> min-x;
+	property <length> max-x;
+
+	property <length> safe-cx: max(min(cx, max-x), min-x);
+	x: safe-cx - width/2;
+
+	Rectangle { //visible
+		width: 2px;
+		x: (parent.width - width)/2;
+		background: Palette.div;
+	}
+
+	TouchArea {
+		mouse-cursor: col-resize; 	
+		
+		property <length> drag-x: 0px;
+
+		pointer-event(event) => { 
+			if (event.kind == PointerEventKind.down && event.button == PointerEventButton.left) {
+				drag-x = mouse-x;
+			}
+		}
+
+		moved => { 
+			root.moved(id, max(min(parent.cx + mouse-x - drag-x, max-x), min-x));
+		}
+	}
+}
+
+HorizontalDiv := Rectangle {
+
+	property <DivStretch> divvy: {
+		colors: [Colors.blue, Colors.green, Colors.purple],
+		stoppers: [100px, 100px, 150px],
+		links: [0px, 200px, 600px, 800px],
+	};
+
+	// what's the point of the struct if you can define manipulations on it? this sucks...
+	// guess that's why you can return things from callbacks. let's try that next.
+
+	// yeah let's just stop handling logic in here altogether, unless it's like theming stuff...
+
+	property <float> scale: width / divvy.links[divvy.links.length - 1];
+
+	for i in divvy.stoppers.length : InnerRect {
+		lx: divvy.links[i]*scale;
+		rx: divvy.links[i+1]*scale;
+		background: divvy.colors[i];
+	}
+
+	for i in (divvy.links.length - 2) : VerticalEdge {
+		cx: divvy.links[i+1]*scale;
+		min-x: divvy.links[i]*scale + divvy.stoppers[i];
+		max-x: divvy.links[i+2]*scale - divvy.stoppers[i+1];
+		id: i;
+		moved (id, new-cx) => {
+			divvy.links[i+1] = new-cx / scale;
+		 }
+	}
+}
+
+export DivvyWindow := Window {
+	property <DivStretch> divvy <=> hDiv.divvy;
+
+	min-width: 350px;
+	max-width: 800px;
+	min-height: 400px;
+
+	hDiv := HorizontalDiv {  }
+
+	/* property <length> min-across: 100px;
+	property <length> pad: 10px;
+
+	Rectangle {
+		background: red;
+		x: pad;
+		y: pad;
+		width: div_1.cx - pad*2;
+		height: root.height - pad*2;
+	}
+
+	div_1 := VerticalEdge {
+		cx: 200px;
+		y: root.y;
+		height: root.height;
+		min-x: min-across;
+		max-x: div_2.cx - min-across;
+	}
+
+	Rectangle {
+		background: red;
+		x: div_1.cx + pad;
+		y: pad;
+		width: div_2.cx - div-1.cx - pad*2;
+		height: root.height - pad*2;
+	}
+
+	div_2 := VerticalEdge {
+		cx: 600px;
+		y: root.y;
+		height: root.height;
+		min-x: div_1.cx + min-across;
+		max-x: root.width - min-across;
+	}
+
+	Rectangle {
+		background: red;
+		x: div_2.cx + pad;
+		y: pad;
+		width: root.width - div-2.cx - pad*2;
+		height: root.height - pad*2;
+	} */
+}
+
+/* 
+	rust defined stucture with window properties keyed by id.
+	id in recursive list structure with relative sizes (or just actual sizes, which are adjusted according to window events)
+	conversion from recursive list into coordinate deal, or some kind of breaker things?
+	breaker deal (kinda like the grid thing):
+		filler, win 2, vert, 
+			filler, filler, horiz,
+				win 4, win 5, horiz
+				win 6, win 7, vert
+	
+	coordinates:
+		template:
+		win 2: 1-vert
+		win 4: 0-vert, 0-horiz, 0-horiz
+		win 5: 0-vert, 0-horiz, 1-horiz
+		win 6: 0-vert, 1-horiz, 0-vert
+		win 4: 0-vert, 1-horiz, 1-vert
+
+		Since callbacks can go straight to root, why not stick with nested structure?
+		however, this can't be stored within slint struct, so far as I can tell?
+
+		doesn't need to be nested i guess. But it does... Need to have separate structs? One that is the container, one that is the two types of lists.
+			container can then either be window or list?
+		but there's no function you can call to add to it... You can create a new window, and add it to the list. 
+		Does it even need to be a property? yes. struct can't access outside...
+		Have the property store vector of rust defined struct which links recursively. Gen window from that???
+		UI resizing logic should be separate, though.
+			idk how often this refreshes. Guess it can detect changes.
+		How would feedback work? Callback for window rearranging. For resizing: stretch should handle everything? No it won't.
+			Yes. Use stretch, and figure out how to match that with window boundaries. Start with that part.
+
+ */
+
+/* 
+in main
+
+let div_win = DivvyWindow::new();
+
+    let div_win_handle = div_win.as_weak();
+    div_win.on_moved(move |id, new_cx| {
+        let div_win = div_win_handle.unwrap();
+        let divvy_model = div_win.get_divvy().links;
+        let mut link = divvy_model.iter().enumerate().filter(|(i, pos)| *i == (id as usize));
+        if let Some((idx, pos)) = link.next() {
+            divvy_model.set_row_data(idx, new_cx);
+        }
+    });
+
+    /* 
+    let ui = AppWindow::new();
+
+    let ui_handle = ui.as_weak();
+    ui.on_request_increase_value(move || {
+        let ui = ui_handle.unwrap();
+        ui.set_counter(ui.get_counter() + 1);
+    });
+
+    ui.run(); */
+
+    div_win.run(); */
