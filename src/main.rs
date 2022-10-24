@@ -2,6 +2,155 @@ use slint::{Model, VecModel, Color};
 use std::{rc::Rc, cell::RefCell};
 slint::include_modules!();
 
+/*
+    So, I currently have something that stores its relative position on the screen (top, bottom, whatever) and resizes the things inside
+        along one axis
+    Is storing relative position necessary? Rather, if you're something inside that, you don't have one...
+        function to get UniFrame top, breadth, and parent length, default to trait. Weak pointer to parent which returns such.
+    Okay, so say you have a nested deal. Diff between UniFrame and UniSplit... Say that a UniFrame can contain a UniSplit.
+        Then a UniFrame has a top and breadth function, which UniSplit points to?
+        Then what is to_region? It returns a list of regions, I guess, which then get combined. Feels a bit wasteful... Rather: pass in a reference
+            to a list, and add to it? Would have to be refcell. Why do appends have to be mutating? Ugh.
+        Then what is the purpose of UniFrame? It tracks in terms of size, min_size, and offset. The generation is conducted by UniSplit, but only
+            to get reference to orientation and size. If you move that to UniFrame, then the purpose of UniFrame...
+                Well, I should be thinking in terms of structs and traits. UniSplit is what does the shit.
+            No, it's recursive.
+    UniFrame is the smallest unit. It generates a region. It stores the least shared data: the offset, size, and min-size.
+        From parent UniFrame to child UniFrame, it communicates size, and passes on top and breadth.
+        From child UniFrame to parent UniFrame, it communicates min-size, and passes on generated regions.
+        If there is no child UniFrame, then there are no passed on generated regions.
+            Then, the to_region is implemented by Splits. These check whether Frame is empty or not...
+            No, to_region implemented by UniFrame. If empty, uses parent, if not, uses child? idk.
+    What about the generated edges? These are produced relative to the Split. UniFrame only provides some data. So both to_region and to_edge
+        should be from parent. The childsplit call returns a vector that can append on.
+    
+    How are top, breadth, and generated regions passed on? Well, for both, the split optionally produces it itself...
+        Okay, so parentSplit owns frame owns childSplit. Weak links back the other way.
+            Alt, co ownership of frame? Because there's data the other way in terms of min-size...
+        childSplit has parentFrame weak and optional. If no frame, default top and breadth. Therefore, function called at childsplit level.
+            Frame has permanent gettop and bottom deal. (stored in frame? No reason...) Maybe stores reference from parent? Sure, but no mutability
+                with immutable reads, right? No can do.
+        frame owns childSplit weak and optional. But it needs data from both parent and child.
+            You could have a fall through. If no child, parent does toRegion. If with child, frame does it. But in the child toRegion calc
+                it's gonna go through and access the parent top bottom a ton... Wouldn't it be better, then, to access it from the child?
+        !! toRegion is provided with top and bottom values, which can be copied. No mutability issues.
+            toRegion is at split level, so that there's no choosing between vec or regular return. Or rather that case is handled inside...
+            frame passes on toRegion call as is, and passes on childSplit option as is. Just a communicator, when not used by split.
+        Fuck... but right now, there's also passing in x position. Like, the data from the frame isn't even in use by the child, the data
+            necessary has to be calculated by the parent split. As long as the parent associates a split with a frame, it doesn't matter about
+            owner ship, about the split having access to frame data.
+
+    So, parent owner of frame, frame owner of child. No need for weak refs the other way, because parent will generate needed size stuff
+     when modding child.
+        But what if a parent split changes size? rn it calls drag far and drag near on the frame. guessing that is optionally propagated to split.
+            Then split has to have the same function? I don't like that duplicate... It does mean that resize and drag could be generalized.
+            So, resize could be seen as a drag on the parent? No, bad idea, because there's no minimums in that situation. A drag could be rejected.
+            So UniFrame handles the initial drag rejection. If it does actually happen, it calls resize on the underlying split: accurate to what
+             needs to be modified. There is no need for a separate drag on the split because resize forcibly handles it. You just need a way to obtain
+             min size recursively. Further drags in the child UniSplit also propagate recursively.
+            Currently, this model stores size. The min_size is essentially the min_size of the window, going below just clips off. A change is made.
+                The calculation is made. Then the model is updated from the new numbers. Except part of the model update is also calculation, because
+                 of splits and offsets. You could go the direction of storing position for everyone, or storing percentages.
+                If you store percentages, you'll still need a recursive get_min, but that's not something that's modified. Otherwise, a drag only
+                 changes one value. Then, to get actual size, you have to calculate from the top. Except it's worth being about the call that calculation
+                 from the bottom, because you won't know the size that you're trying to change to.
+
+    fuck. Think about something different. So you have a recursive dealio. How do you link and update with the model, based on that?
+        Update whole model basically recursively calls init_region and sets row data. That means that init_region has to consistently return in order.
+        Resize calls from the top. Also calls recursively. uses same update model thing.
+        Edge move affects two Uniframes. There has to be a way to update for only those two frames... Then there needs to be a frame specific update,
+         which is also recursive. (could be the same "update" as that called from the top). Except one edge is excluded... that's a detail I don't
+         care to leave out, it's just one edge out of two regions.
+            Now, how can you make sure the right update is called? That means that a child frame has to be able to call its offset row position!
+            Another number to provide...
+            
+
+    Okay, target. model. Two lists. Regions and edges. Describe positions and some sort of callback id.
+    
+    Structures:
+        split: x, y, breadth, length, orientation, some kinda split_id.
+            contains frame, edges, splits
+        sizes:
+            edge: offset from split beginning?, min-size from prev edge
+            frame: size (offset from prev frame), min-size
+                what is the point of also including offset? because then you can mod the start of one frame due to edge drag without going through all previous
+    okay, no, this isn't what i want
+
+    Resursion to target:
+        any deletions or additions refresh entire model, cuz it's necessary. Well, how do you get callback id?
+            split_id and region_id. region is relative to inside of split. Or... Single id related to row. It's just the index inside...
+            run calc from bottom that gets id?
+    
+    in terms of commands...
+    Remember, MVC. So, the view is already handled.
+    We have two chained models. The list of regions and edges makes the view.
+    The recursive structure makes the model.
+    
+    The controller has: drag edge, resize, add, delete that targets some callback in first typa model.
+        What parts are these applied to?
+        edge drag is applied to single edge, which affects adjacent frames.
+            necessary data:
+                needs to know what to impact, and what row to affect
+                needs to know min-size and resulting size, or otherwise sometype of "stop further dragging" signal. Drag signal is px based.
+                if px based:
+                    Know adjacent frame, judge off that size.
+                if % based:
+                    Know container frame px.
+                        container has to have some call to get_px that returns default or from parent. split link to parent split.
+                    adjacent frame %s
+                    min % from frame -> some conversion from px.
+            Handling:
+                px based:
+                    split (list)
+                        index into two regions.
+                        split methods: drag(index, dist)
+                        region methods: get min (recursive down). change sizes/offets.
+                    linkage of frames, end excluded
+                        given frame affects self and following
+                        frame methods: access to offset. get min for both (recursive? meaning frame must link to contained frames). change sizes. drag_right_edge(dist)
+                % based:
+                    wait, idea. Only need container px, to det resulting % drag. Then just change it and call update? Update then clamps %...
+
+        resize applied to single frame, propagates through children
+            necessary data:
+                gotta know child frames
+                size of children, for relative resizing.
+                mins
+            handling: (det px based)
+                list
+                    already have child frame current sizes and mins. Calc new sizes, then set.
+                    or, child methods: shrink that returns result. Shrink recurses to get actual shrinkage... Then, same for window or?
+                        shrinkage stops at some point. That's fine, just stop doing shit... Except, on window expand.
+                Window expand should be separate method. If shrinking, it applies shrink on given. However, if the window size is less than
+                 parent frame, it takes no action. Only if larger does new width/height do anything... bet.
+                linkage
+                    hmm... maybe, if you have an edge, it has reference to all edges to its left? idk... don't like this method.
+        ok, so we're going with the list?
+            addition: addition at site.
+            deletion: deletion from list. if only one remains -> collapse upward? So
+                split[[frame, split[frame, split[frame, frame]]]]
+                split[[frame, split[frame]]]
+                split[[frame, frame]]
+                Well, then shouldn't splits and frames just share the same shit...? What if the only optional was whether they had children?
+                    I mean, a frame already stores its offset for convenience... other methods can be got from parents.
+            sure. fine.
+        
+        how about indices? sol 1: unique ids with top level dict, all throughout accessible...
+            on init: new frames/splits get random ids. A produced "region" or "edge" is given that id.
+                on model update, returned list is pushed with ids. indices are irrelevant.
+            on update all:
+                returned list or dict with ids. For each, find matching in model, update that row.
+            on callback:
+                this is the hard part...
+        reversible top level dict from id to object and back + id number counter. cool...
+            This means a lotta shit has to be callable from frame level... Guess the point of the frame might just be as an id point, along
+             with whatever info split needs from it. Okay, I think this is enough prep.
+             Could have model track objects directly with row, and then model notify when changes. Gets rid of intermediate model... who cares.
+              still gonna be by rows...
+        Add... should still only update some. idk. A more specific model can allow for that in the notifs! so do that later, update all for now.
+
+ */
+
 enum Orientation {
 	Vertical,
 	Horizontal,
